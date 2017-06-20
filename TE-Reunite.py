@@ -119,16 +119,25 @@ def getStrand(start,end):
 	elif start > end:
 		return ("C",end,start)
 
-def importRefseqs(targetPath):
+def importRefseqs(targetPath,stripHash=False):
 	"""Populate dictionary with reference TEs, checking that names are unique."""
 	refMaster = dict()
-	for rec in SeqIO.parse(targetPath, "fasta"):
-		if rec.id not in refMaster.keys():
-			refMaster[rec.id] = rec
-		else:
-			# If ref TE name occurs > 1, die.
-			print("WARNING: Sequence name %s occurs multiple times in reference repeat fasta." % str(rec.id))
-			sys.exit(1)
+	if not stripHash:
+		for rec in SeqIO.parse(targetPath, "fasta"):
+			if rec.id not in refMaster.keys():
+				refMaster[rec.id] = rec
+			else:
+				# If ref TE name occurs > 1, die.
+				print("WARNING: Sequence name %s occurs multiple times in reference repeat fasta." % str(rec.id))
+				sys.exit(1)
+	else:
+		for rec in SeqIO.parse(targetPath, "fasta"):
+			if str(rec.id).split('#',1)[0] not in refMaster.keys():
+				refMaster[str(rec.id).split('#',1)[0]] = rec
+			else:
+				# If ref TE name occurs > 1, die.
+				print("WARNING: Sequence name %s occurs multiple times in reference repeat fasta." % str(rec.id).split('#',1)[0])
+				sys.exit(1)
 	return refMaster
 
 def importGenomes(genomeList,GenLabels,oldSeq=None):
@@ -210,25 +219,25 @@ def importBLAST(infile=None,QuerySeq=None,chr2Gen=None,minCov=0.9,minID=0.9,eVal
 			blastHits[str(line[0])] = sorted(blastHits[str(line[0])], key = lambda x: (x.GenLabel, x.ChrName, x.HitStart, x.HitEnd))
 	return blastHits
 
-def importRM(infile=None,QuerySeq=None,chr2Gen=None,minCov=0.9,minID=0.9,score=100):
+def importRM(infile=None,QuerySeq=None,chr2Gen=None,minCov=0.9,minID=0.9,score=100,maxInsert=0.1,maxFlanks=0.1):
 	"""Import vaild RM.out hits to dict with structure {repeatName:[Hit1,Hit2,Hit3]} 
 	where Hits are named tuples containing relevant hit information."""
 	""" RM out
 	0		SW score
-	1		pDiv
-	2		pDel
-	3		pIns
-	4		Hit_seq_Name
+	1		% substitutions in matching region compared to the consensus (Divergence) [%SNPs]
+	2		% of gaps in hit (deleted bp relative to repeat) [Calc = (#Gaps in hit) / alignmentLength] 
+	3		% of gaps in reference repeat (inserted bp in hit, relative to reference repeat) [Calc = (#Gaps in repeat) / alignmentLength]
+	4		name of sequence containing hit
 	5		hitStart
 	6		hitEnd
-	7		non-hit positions left
+	7		no. of bases in query sequence past the ending position of match
 	8		strand
-	9		QueryName
-	10		Qclass
-	11		Qstart
-	12		QEnd
-	13		non-hit positions in query
-	14		hitCount
+	9		Name of repeat (query sequence)
+	10		Class of the repeat (string in lib name following '#')
+	11		no. of bases in (complement of) the repeat consensus sequence prior to beginning of the match (so 0 means that the match extended all the way to the end of the repeat consensus sequence)
+	12		Starting position of match in database sequence (using top-strand numbering)
+	13		Ending position of match in database sequence
+	14		Sequential hit identifier	
 	"""
 	# Init dict
 	rmHits = dict()
@@ -237,7 +246,7 @@ def importRM(infile=None,QuerySeq=None,chr2Gen=None,minCov=0.9,minID=0.9,score=1
 		rmHits[refTE] = list()
 	# Init named tuple structure
 	hitItem = namedtuple("HitRecord",['refTE','ChrName','GenLabel',
-										'Strand','Gaps','Idt','HitLen',
+										'Strand','Gaps','Idt','alignLen',
 										'Qstart','Qend','HitStart',
 										'HitEnd'])
 	# Read in RM out file
@@ -247,20 +256,33 @@ def importRM(infile=None,QuerySeq=None,chr2Gen=None,minCov=0.9,minID=0.9,score=1
 			if line: 
 				if line[0][0].isdigit():
 					# Calculate proportion of query covered by hit alignment
-					hitCoverage = int(line[6])-int(line[5])/len(QuerySeq[str(line[9])].seq)
-					hitID = (100-float(line[1]))/100
+					if str(line[8]) == 'C':
+						Qstart = int(line[13])
+						Qend = int(line[12])
+					else:
+						Qstart = int(line[11])
+						Qend = int(line[12])
+
+					refLen = Qend - Qstart # Length of refTE included in alignment
+					rawHitLen = int(line[6])-int(line[5]) # Includes any internal insertions, may be > than refLen
+					hitCov = refLen/len(QuerySeq[str(line[9])].seq) # Proportion of refTE covered by alinged segments of hit, does not include insertions
+					hitID = (100-float(line[1]))/100 # Prop. matches in aligned positions
+					hitInsert = rawHitLen/refLen #Raw hit interval as proportion of alignment to reference (i.e. (Aligned regions of hit + insertions spaned by RM) / Aligned region of refTE, value > 1 indicates insertions)
+					alignLen = int(round(refLen-1) * (1+(float(line[2])/100))) # Aligned region of refTE + gaps in hit
+					gapsInHit = int(round(alignLen - (refLen))) # ~Positions deleted in hit relative to refTE
+					gapsInRef = int(round(alignLen * (float(line[3])/100))) # ~Positions inserted in hit relative to refTE
 					# Ignore if SW-score, ID or Coverage are too low 
-					if float(line[0]) < score or hitID < minID or hitCoverage < minCov:
+					if float(line[0]) < score or hitID < minID or hitCov < minCov or hitInsert > (maxInsert+1) or hitCov > (maxFlanks+1):
 						continue
-					rmHits[str(line[9])].append(hitItem(refTE=str(line[9]), ChrName=str(line[4]),
-															GenLabel=chr2Gen[str(line[4])], Strand=str(line[8]),
-															Gaps=int(line[3]), Idt=hitID, HitLen=int(line[6])-int(line[5]), 
-															Qstart=str(line[11]), Qend=str(line[12]),
-															HitStart=int(line[5]), HitEnd=int(line[6])
-															))
-					# Sort entries by Genome, Chrm, Start, End
-					rmHits[str(line[9])] = sorted(rmHits[str(line[9])].values(), key = lambda x: (x.GenLabel, x.ChrName, x.HitStart, x.HitEnd))[0].idx
-			return rmHits
+					else:
+						rmHits[str(line[9])].append(hitItem(refTE=str(line[9]), ChrName=str(line[4]),
+																GenLabel=chr2Gen[str(line[4])], Strand=str(line[8]),
+																Gaps=gapsInRef, Idt=hitID, alignLen=alignLen, 
+																Qstart=Qstart, Qend=Qend,
+																HitStart=int(line[5]), HitEnd=int(line[6])
+																))
+						rmHits[str(line[9])] = sorted(rmHits[str(line[9])], key = lambda x: (x.GenLabel, x.ChrName, x.HitStart, x.HitEnd))
+	return rmHits
 
 def writeClusters(allHits,refMaster,genMaster,outDir,tempDir,getAnchors=False):
 	clusterOutPaths = list()
@@ -344,7 +366,10 @@ def main(args):
 	# Also return seq to genome map as {SeqName:GenLabel}
 	genMaster,chr2Gen = importGenomes(args.genomes,args.genomeLabels)
 	# Import reference repeat library, check for unique names.
-	refMaster = importRefseqs(args.repeats)
+	if args.blastTAB:
+		refMaster = importRefseqs(args.repeats)
+	elif args.rmOut:
+		refMaster =importRefseqs(args.repeats,stripHash=True)
 	# Import BLAST or RM hits, filter for query coverage and identity, determine orientation
 	# Dict key by refName
 	if args.blastTAB:
