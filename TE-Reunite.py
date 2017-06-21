@@ -13,13 +13,12 @@ import sys
 import os
 import time
 import argparse
+import itertools
 from collections import Counter
 from collections import namedtuple
 from copy import deepcopy
 from Bio import SeqIO
 import Bio.Align.Applications
-#import numpy as np
-#import seaborn as sns
 from _version import __version__
 
 def makeTemp():
@@ -59,10 +58,6 @@ def checkSameLen(args):
 	# Check same number of genome labels and files
 	if len(args.genomes) != len(args.genomeLabels):
 		raise IOError('Different number of Labels and Genome files.')
-	#else: #Report label pairs
-		#print("Setting Genome labels:")
-		#for i in range(len(args.genomes)):
-			#print(str(args.genomeLabels[i]) + "==" + args.genomes[i])
 
 def checkExists(args):
 	# Check all genome files exist
@@ -88,18 +83,18 @@ def dochecks(args):
 	# Check same number of genome labels and files
 	checkSameLen(args)
 	# Check aligner is installed
-	checkAligners(args)
+	#checkAligners(args)
 	# Make outDir if does not exist else set to current dir.
 	outDir = checkPaths(args.outDir)
-	if args.doAlign:
+	#if args.doAlign:
 		# Make alnDir if does not exist else set to current dir.
-		alnDir = checkPaths(args.alnDir)
-	else:
-		alnDir = None
+	#	alnDir = checkPaths(args.alnDir)
+	#else:
+	#	alnDir = None
 	# Set temp directory
-	tempDir = makeTemp()
+	#tempDir = makeTemp()
 	# Return paths
-	return outDir,tempDir,alnDir
+	return outDir#,tempDir#,alnDir
 
 def chunkstring(string, length=80):
 	return (string[0+i:length+i] for i in range(0, len(string), length))
@@ -202,6 +197,9 @@ def importBLAST(infile=None,QuerySeq=None,chr2Gen=None,minCov=0.9,minID=0.9,eVal
 			# Ignore lines begining with '#'
 			if line[0][0] == "#":
 				continue
+			#Check that hit chrom exists in imported genomes
+			if str(line[1]) not in chr2Gen.keys():
+				continue
 			# Calculate proportion of query covered by hit alignment
 			hitCoverage = int(line[3])/len(QuerySeq[str(line[0])].seq)
 			# Ignore if eVal is above threshold, or ID or Coverage are too low 
@@ -284,7 +282,7 @@ def importRM(infile=None,QuerySeq=None,chr2Gen=None,minCov=0.9,minID=0.9,score=1
 						rmHits[str(line[9])] = sorted(rmHits[str(line[9])], key = lambda x: (x.GenLabel, x.ChrName, x.HitStart, x.HitEnd))
 	return rmHits
 
-def writeClusters(allHits,refMaster,genMaster,outDir,tempDir,getAnchors=False):
+def writeClusters(allHits,refMaster,genMaster,outDir,getAnchors=False):
 	clusterOutPaths = list()
 	# Open Error Log file
 	# refMaster {refID:SeqRecord}
@@ -322,46 +320,60 @@ def getFragments(genMaster,allHits,refTE):
 			seq = str(genMaster[x.GenLabel][x.ChrName].seq[x.HitStart:x.HitEnd])
 		yield (lable,seq)
 
-"""
-def buildAnchors(target,blastHits):
-	anchors = list()
-	anchorItem = namedtuple('Seq1','Seq2','Start1','Start2','hitlen','Score','ID')
-	for hit in blastHits[target]:
-		if hit.gaps == 0:
-			# Set Name Target_GenID_ChrmID_Start_End_Strand
-			anchors.append(anchorItem(target,hitName,Qstart,Hstart,hitLen,0,ID))
-	# Sort anchors by ID
-	# Update score for anchors (high ID to low)
-	return anchors
+def checkOverlap(Astart,Aend,Bstart,Bend):
+	if (Aend >= Bstart and Aend <= Bend) or (Astart <= Bend and Astart >= Bstart) or (Astart >= Bstart and Aend <= Bend) or (Bstart >= Astart and Bend <= Aend):
+		return True
+	else:
+		return False
 
-def writeAnchors(tempPath,anchors):
-	# Unpack and write to tempPath
-	pass
+def countIntersects(allHits):
+	countDict = dict()
+	for refA,refB in itertools.combinations(allHits.keys(), 2):
+		for hitA in allHits[refA]:
+			for hitB in allHits[refB]:
+				if hitB.GenLabel == hitA.GenLabel and hitA.ChrName == hitB.ChrName:
+					if checkOverlap(hitA.HitStart,hitA.HitEnd,hitB.HitStart,hitB.HitEnd):
+						if frozenset([refA,refB]) not in countDict.keys():
+							countDict[frozenset([refA,refB])] = 1
+						else:
+							countDict[frozenset([refA,refB])] += 1
+	return countDict
 
-def alignSet(outPath,tempPath):
-	# If anchors not none
-	# Write anchors to temp
-	# Align with anchors
-	# Else - Align without anchors
-	pass
+def groupOverlaps(d):
+	""" For all unique pairs of refTEs sharing one or more overlapping (of >=1bp) 
+		hits in any target genome, merge pairs which share at least one refTE in 
+		common. Report merged overlap clusters."""
+	d = dict((k, v) for k, v in d.items() if v >= 1)
+	outlist = list()
+	inlist = sorted([sorted(list(x)) for x in d.keys()])
+	if not inlist:
+		pass
+	else:
+		outlist.append(inlist[0]) # Add the first item from input list to outlists
+		for l in inlist[1:]: # Starting from second item in input lists
+			listSet = set(l) # Convert to set
+			merge = False # Reset merge log
+			for index in range(len(outlist)): # For each outlist
+				rset = set(outlist[index]) # Convert to set
+				if len(listSet & rset) != 0: # If >=1 value shared value between inlist and current outlist
+					outlist[index] = sorted(list(listSet | rset)) # Merge lists and update position in outlists
+					merge = True # Log merge event
+					break # Break loop, no need to scan remaining output lists 
+			if not merge: # Add new list to outlist if unmerged
+				outlist.append(l)
+	# Return list of clusters sorted from largest to smallest.
+	return sorted(outlist, key=len,reverse=True)
 
-def countIntersects(clusters):
-	# Get all unique target pairs
-	# Count number of hits in target1 which overlap target2 hits
-	# Plot heatmap with seaborn
-	pass
-
-# Optional: Attempt alignment of reunited repeat families
-def alignSets():
-	pass
-# Optional: Produce heatmap of overlapping repeat hits  
-def plotIntersects():
-	pass
-"""
+def	writeOverlaps(outDir,clusters):
+	outPath = os.path.join(outDir, "Hit_Overlap_Clusters" + ".txt")
+	outHandle = open(outPath,'w')
+	for i in range(len(clusters)):
+		outHandle.write("Group_%s:\t" % str(i) + '\t'.join(clusters[i]) + "\n")
+	outHandle.close()
 
 def main(args):
 	# Check for required files + make output directories
-	outDir,tempDir,alnDir = dochecks(args)
+	outDir = dochecks(args)
 	# Import target genomes as {GenLabel:{ChromName:SeqRecord}}
 	# Also return seq to genome map as {SeqName:GenLabel}
 	genMaster,chr2Gen = importGenomes(args.genomes,args.genomeLabels)
@@ -382,18 +394,16 @@ def main(args):
 								minID=args.minID, score=args.minSW)
 	else:
 		sys.exit(1)
-	# Extract hits for each refRepeat, write clusters and return summary object 
-	# list of tuples: [(clustPath,anchorPath,clustCount,anchorCount)]
-	clusterPaths = writeClusters(allHits,refMaster,genMaster,outDir,tempDir,getAnchors=args.anchors)
 
-	# Optional: Attempt alignment of reunited repeat families
-	#if args.doAlign:
-	#	alignSets(clusters=clusterPaths,outPath=alnDir,alnTool=args.AlnTool,outFormat=args.outAlnFormat)
-	# Optional: Produce heatmap of overlapping repeat hits  
-	#if args.heatmap:
-	#	plotIntersects(allHits,refMaster,outDir)
-	# Clean temp directory
-	 # Delete tempDir
+	# Find number of overlapping hits between any two refTEs
+	if args.reportoverlaps:
+		overlapDict = countIntersects(allHits)
+		refClusters = groupOverlaps(overlapDict)
+		writeOverlaps(outDir,refClusters)
+
+	# Extract hits for each refRepeat, write clusters and return summary object for use in future alignment feature
+	clusterPaths = writeClusters(allHits,refMaster,genMaster,outDir)
+
 
 if __name__== '__main__':
 	__version__ = '0.0.1'
@@ -465,6 +475,7 @@ if __name__== '__main__':
 								type=str,
 								default=None, 
 								help="Write reunited transposon families to this directory.")
+	"""
 	parser.add_argument("--doAlign",
 								action="store_true",
 								help="If set attempt to align reunited repeat families.")
@@ -481,15 +492,12 @@ if __name__== '__main__':
 								default="fasta",
 								choices=["clustal","emboss","fasta","fasta-m10","ig","nexus","phylip","phylip-sequential","phylip-relaxed","stockholm"],
 								help='Optional: Write alignment including reference sequence to file of format X.')
-	parser.add_argument("--heatmap",
+	"""
+	parser.add_argument("--reportoverlaps",
 								action="store_true",
-								help="Plot heatmap for number of overlapping hits between all \
-								pairs of reference repeats. Indicates potential duplicated or nested \
-								reference sequences.")
-	parser.add_argument("--anchors",
-								action="store_true",
-								help="Calculate alignment anchor table for all ungapped hits. \
-								For use with DIALIGN.")
+								help="Report clusters of reference repeats which share hit locations overlapping >= 1bp with at least \
+								one other member of the cluster. Use as guide to curate and merge redundant reference repeats.")
+
 
 	args = parser.parse_args()
 	main(args)
