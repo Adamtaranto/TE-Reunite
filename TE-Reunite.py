@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 #python 2.7.5 requires biopython
 #TE-Reunite.py
-#Version 0.0.1 Adam Taranto, June 2017
+#Version 0.1.0 Adam Taranto, June 2017
 #Contact, Adam Taranto, adam.taranto@anu.edu.au
 
 ###################################################################################
@@ -282,28 +282,31 @@ def importRM(infile=None,QuerySeq=None,chr2Gen=None,minCov=0.9,minID=0.9,score=1
 						rmHits[str(line[9])] = sorted(rmHits[str(line[9])], key = lambda x: (x.GenLabel, x.ChrName, x.HitStart, x.HitEnd))
 	return rmHits
 
-def writeClusters(allHits,refMaster,genMaster,outDir,getAnchors=False):
-	clusterOutPaths = list()
+def writeClusters(allHits,refMaster,genMaster,outDir,WriteSummary=True,SkipZeros=False):
+	##clusterOutPaths = list()
 	# Open Error Log file
 	# refMaster {refID:SeqRecord}
 	# genMaster = {GenLabel:{ChromName:SeqRecord}}
 	# allHits = {repeatName:[Hit1,Hit2,Hit3]}
 	# ['refTE','ChrName','GenLabel','Strand','Gaps','Idt','HitLen','Qstart','Qend','HitStart','HitEnd']
 	for refTE in refMaster.keys():
-		outPath = os.path.join(outDir, "Cluster_" + refTE + ".fa")
-		clusterOutPaths.append(outPath)
-		outHandle = open(outPath,'w')
-		# Write reference TE
-		outHandle.write(">%s \n" % refTE)
-		for line in chunkstring(str(refMaster[refTE].seq)):
-			outHandle.write(line + "\n")
-		# Write hits to cluster
-		for label,seq in getFragments(genMaster,allHits,refTE):
-			outHandle.write(">%s \n" % label)
-			for line in chunkstring(seq):
+		if len(allHits[refTE]) == 0 and SkipZeros:
+			continue
+		else:
+			outPath = os.path.join(outDir, refTE + "_ReuniteHits_" + str(len(allHits[refTE])) +".fa")
+			##clusterOutPaths.append(outPath)
+			outHandle = open(outPath,'w')
+			# Write reference TE
+			outHandle.write(">%s \n" % refTE)
+			for line in chunkstring(str(refMaster[refTE].seq)):
 				outHandle.write(line + "\n")
-		outHandle.close()
-	return clusterOutPaths
+			# Write hits to cluster
+			for label,seq in getFragments(genMaster,allHits,refTE):
+				outHandle.write(">%s \n" % label)
+				for line in chunkstring(seq):
+					outHandle.write(line + "\n")
+			outHandle.close()
+	##return clusterOutPaths
 
 def getFragments(genMaster,allHits,refTE):
 	for x in allHits[refTE]:
@@ -320,19 +323,31 @@ def getFragments(genMaster,allHits,refTE):
 			seq = str(genMaster[x.GenLabel][x.ChrName].seq[x.HitStart:x.HitEnd])
 		yield (lable,seq)
 
-def checkOverlap(Astart,Aend,Bstart,Bend):
+def getOverlap(a, b):
+	return max(0, min(a[1], b[1]) - max(a[0], b[0]))
+
+def checkOverlap(Astart,Aend,Bstart,Bend,pCov=None):
 	if (Aend >= Bstart and Aend <= Bend) or (Astart <= Bend and Astart >= Bstart) or (Astart >= Bstart and Aend <= Bend) or (Bstart >= Astart and Bend <= Aend):
-		return True
+		if not pCov:
+			return True
+		else:
+			Alen = Aend - Astart
+			Blen = Bend - Bstart
+			insLen = getOverlap((Astart,Aend),(Bstart,Bend))
+			if insLen/Alen >= pCov or insLen/Blen >= pCov:
+				return True
+			else:
+				return False
 	else:
 		return False
 
-def countIntersects(allHits):
+def countIntersects(allHits,pCov):
 	countDict = dict()
 	for refA,refB in itertools.combinations(allHits.keys(), 2):
 		for hitA in allHits[refA]:
 			for hitB in allHits[refB]:
 				if hitB.GenLabel == hitA.GenLabel and hitA.ChrName == hitB.ChrName:
-					if checkOverlap(hitA.HitStart,hitA.HitEnd,hitB.HitStart,hitB.HitEnd):
+					if checkOverlap(hitA.HitStart,hitA.HitEnd,hitB.HitStart,hitB.HitEnd,pCov):
 						if frozenset([refA,refB]) not in countDict.keys():
 							countDict[frozenset([refA,refB])] = 1
 						else:
@@ -350,17 +365,21 @@ def groupOverlaps(d):
 		pass
 	else:
 		outlist.append(inlist[0]) # Add the first item from input list to outlists
-		for l in inlist[1:]: # Starting from second item in input lists
-			listSet = set(l) # Convert to set
+		for l in inlist[1:]: # Starting from second item in input list
 			merge = False # Reset merge log
+			listSet = set(l) # Convert to set
 			for index in range(len(outlist)): # For each outlist
 				rset = set(outlist[index]) # Convert to set
-				if len(listSet & rset) != 0: # If >=1 value shared value between inlist and current outlist
+				if len(listSet & rset) != 0 and not merge: # If >=1 value shared value between inlist and current outlist
 					outlist[index] = sorted(list(listSet | rset)) # Merge lists and update position in outlists
 					merge = True # Log merge event
-					break # Break loop, no need to scan remaining output lists 
+					mergeIdx = index
+				elif len(listSet & rset) != 0 and merge:
+					outlist[mergeIdx] = sorted(list(set(outlist[mergeIdx]) | rset))
+					outlist[index] = []
 			if not merge: # Add new list to outlist if unmerged
 				outlist.append(l)
+			outlist = [x for x in outlist if x != []]
 	# Return list of clusters sorted from largest to smallest.
 	return sorted(outlist, key=len,reverse=True)
 
@@ -369,6 +388,27 @@ def	writeOverlaps(outDir,clusters):
 	outHandle = open(outPath,'w')
 	for i in range(len(clusters)):
 		outHandle.write("Group_%s:\t" % str(i) + '\t'.join(clusters[i]) + "\n")
+	outHandle.close()
+
+def writeGenomeSummary(outDir, allHits, genMaster):
+	tracker = dict()
+	for refTE in allHits.keys():
+		tracker[refTE] = dict()
+		for gen in genMaster.keys():
+			tracker[refTE][gen] = 0
+		for hit in allHits[refTE]:
+			tracker[refTE][hit.GenLabel] += 1
+
+	GenNames = sorted(genMaster.keys())
+	outPath = os.path.join(outDir, "Summary_Hits_by_Genome.txt")
+	outHandle = open(outPath,'w')
+	#Write header
+	outHandle.write("Name\t" + '\t'.join(GenNames) + '\n')
+	for x in sorted(tracker.keys()):
+		countList = list()
+		for name in GenNames:
+			countList.append(str(tracker[x][name]))
+		outHandle.write(str(x) + "\t" + '\t'.join(countList) + '\n')
 	outHandle.close()
 
 def main(args):
@@ -397,16 +437,18 @@ def main(args):
 
 	# Find number of overlapping hits between any two refTEs
 	if args.reportoverlaps:
-		overlapDict = countIntersects(allHits)
+		overlapDict = countIntersects(allHits,args.pOverlap)
 		refClusters = groupOverlaps(overlapDict)
 		writeOverlaps(outDir,refClusters)
 
-	# Extract hits for each refRepeat, write clusters and return summary object for use in future alignment feature
-	clusterPaths = writeClusters(allHits,refMaster,genMaster,outDir)
+	# Extract hits for each refRepeat, write clusters
+	writeClusters(allHits,refMaster,genMaster,outDir,SkipZeros=args.onlyhits)
+	# Write summary of hits per refRepeat found per target genome
+	writeGenomeSummary(outDir, allHits, genMaster)
 
 
 if __name__== '__main__':
-	__version__ = '0.0.1'
+	__version__ = '0.1.0'
 	###Argument handling.
 	parser = argparse.ArgumentParser(
 								description='For a set of reference transposons, collect instances from one or more genomes.',
@@ -493,6 +535,16 @@ if __name__== '__main__':
 								choices=["clustal","emboss","fasta","fasta-m10","ig","nexus","phylip","phylip-sequential","phylip-relaxed","stockholm"],
 								help='Optional: Write alignment including reference sequence to file of format X.')
 	"""
+	parser.add_argument("--onlyhits",
+								action="store_true",
+								help="If set, suppress output clusters containing only the reference repeat with no additional hits.")
+	parser.add_argument("--pOverlap",
+								type=float,
+								default=0.8,
+								help="Minimum overlap between hits from two refTEs for hit loci to be considered as shared. \
+								Length of intersect as prop. of either hit in pair of hits must be >= to this value. \
+								i.e. A small insert in a larger repeat will have an overlap of 1. Range: 0-1"
+								)
 	parser.add_argument("--reportoverlaps",
 								action="store_true",
 								help="Report clusters of reference repeats which share hit locations overlapping >= 1bp with at least \
