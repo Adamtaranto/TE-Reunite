@@ -1,12 +1,13 @@
 #!/usr/bin/env python
 #python 2.7.5 requires biopython
 #TE-Reunite.py
-#Version 0.1.0 Adam Taranto, June 2017
+#Version 0.1.1 Adam Taranto, June 2017
 #Contact, Adam Taranto, adam.taranto@anu.edu.au
 
 ###################################################################################
 # For a set of reference transposons, collect instances from one or more genomes. #
-# Use aligned collections to build HMMs capturing TE family diversity.            #
+# Use aligned collections to build models capturing TE family diversity or        #
+# produce deRIP'd reference sequence.                                             #
 ###################################################################################
 
 import sys
@@ -282,7 +283,7 @@ def importRM(infile=None,QuerySeq=None,chr2Gen=None,minCov=0.9,minID=0.9,score=1
 						rmHits[str(line[9])] = sorted(rmHits[str(line[9])], key = lambda x: (x.GenLabel, x.ChrName, x.HitStart, x.HitEnd))
 	return rmHits
 
-def writeClusters(allHits,refMaster,genMaster,outDir,WriteSummary=True,SkipZeros=False):
+def writeClusters(allHits,refMaster,genMaster,outDir,WriteSummary=True,SkipZeros=False,writeSeqs=True):
 	##clusterOutPaths = list()
 	# Open Error Log file
 	# refMaster {refID:SeqRecord}
@@ -390,6 +391,17 @@ def	writeOverlaps(outDir,clusters):
 		outHandle.write("Group_%s:\t" % str(i) + '\t'.join(clusters[i]) + "\n")
 	outHandle.close()
 
+def	writeRedundant(outDir,clusters,refMaster):
+	"""clusters is a list of lists"""
+	for i in range(len(clusters)): # For each group
+		outPath = os.path.join(outDir, "Group_%s.fa" % str(i))
+		outHandle = open(outPath,'w')
+		for refTE in clusters[i]: # For each sequence in group
+			outHandle.write(">%s \n" % refTE) # Write sequence name
+			for line in chunkstring(str(refMaster[refTE].seq)):
+				outHandle.write(line + "\n")
+		outHandle.close()
+
 def writeGenomeSummary(outDir, allHits, genMaster):
 	tracker = dict()
 	for refTE in allHits.keys():
@@ -440,6 +452,8 @@ def main(args):
 		overlapDict = countIntersects(allHits,args.pOverlap)
 		refClusters = groupOverlaps(overlapDict)
 		writeOverlaps(outDir,refClusters)
+		if args.redundantRefs:
+			writeRedundant(outDir,refClusters,refMaster)
 
 	# Extract hits for each refRepeat, write clusters
 	writeClusters(allHits,refMaster,genMaster,outDir,SkipZeros=args.onlyhits)
@@ -448,7 +462,7 @@ def main(args):
 
 
 if __name__== '__main__':
-	__version__ = '0.1.0'
+	__version__ = '0.1.1'
 	###Argument handling.
 	parser = argparse.ArgumentParser(
 								description='For a set of reference transposons, collect instances from one or more genomes.',
@@ -549,6 +563,10 @@ if __name__== '__main__':
 								action="store_true",
 								help="Report clusters of reference repeats which share hit locations overlapping >= 1bp with at least \
 								one other member of the cluster. Use as guide to curate and merge redundant reference repeats.")
+	parser.add_argument("--redundantRefs",
+								action="store_true",
+								help="If set with 'reportoverlaps', print groups of potentially redundant reference repeats \
+								to multi FASTA files for inspection.")
 
 
 	args = parser.parse_args()
