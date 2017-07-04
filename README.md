@@ -1,7 +1,7 @@
 # TE-Reunite
 
-For a set of reference transposons, collect instances from one or more genomes. 
-Use aligned collections to build models capturing TE family diversity or produce deRIP'd reference sequence.
+For a set of reference transposons, collect instances from one or more genomes and write as multi-FASTA files.
+Repeat collections can be aligned and used to [build models capturing TE family diversity](http://hmmer.org/), or produce [deRIP'd reference sequences](https://github.com/Adamtaranto/deRIP2).
 
 **Example usage:**
 
@@ -13,7 +13,7 @@ blastn -query RepeatLibrary.fa -evalue 0.01 -outfmt 6 -subject targetGenome.fa -
 # Launch Reunite on blast output file
 # Report clusters of hits per reference repeat, and summary file of reference repeats with overlapping hit locations
 
-./TE-Reunite.py -r RepeatLibrary.fa -b BLAST_Results.tab -c 0.8 -e 0.001 -i 0.7 -o output -g targetGenome.fa -l GEN_1 --reportoverlaps
+./TE-Reunite.py -r RepeatLibrary.fa -b BLAST_Results.tab -c 0.8 -e 0.001 -i 0.7 -o output -g targetGenome.fa -l GEN_1 --reportoverlaps --writeoverlaps
 
 ```
 
@@ -76,3 +76,8 @@ blastn -query RepeatLibrary.fa -evalue 0.01 -outfmt 6 -subject targetGenome.fa -
   locations overlapping >= 1bp with at least one other
   member of the cluster. Use as guide to curate and
   merge redundant reference repeats.  
+
+  **--writeoverlaps**  
+
+  If set with 'reportoverlaps', write groups of potentially 
+  redundant reference repeats to multi FASTA files for inspection.

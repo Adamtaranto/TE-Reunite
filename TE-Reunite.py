@@ -25,7 +25,7 @@ from _version import __version__
 def makeTemp():
 	return os.path.join(os.getcwd(),"_".join(str(time.time()).split(".") + ["temp"]))
 
-def checkPaths(pathIs):
+def checkPaths(pathIs=None):
 	if pathIs:
 		fullpath = os.path.abspath(pathIs)
 		if not os.path.isdir(fullpath):
@@ -392,9 +392,11 @@ def	writeOverlaps(outDir,clusters):
 	outHandle.close()
 
 def	writeRedundant(outDir,clusters,refMaster):
-	"""clusters is a list of lists"""
+	"""Write refTEs which are linked by overlapping hits into multi-FASTA files. 
+	Input variable 'clusters' is a list of lists containing refTE names."""
+	clustDir = checkPaths(os.path.join(outDir,"redundant_ref_clusters"))
 	for i in range(len(clusters)): # For each group
-		outPath = os.path.join(outDir, "Group_%s.fa" % str(i))
+		outPath = os.path.join(clustDir, "Group_%s.fa" % str(i))
 		outHandle = open(outPath,'w')
 		for refTE in clusters[i]: # For each sequence in group
 			outHandle.write(">%s \n" % refTE) # Write sequence name
@@ -452,7 +454,7 @@ def main(args):
 		overlapDict = countIntersects(allHits,args.pOverlap)
 		refClusters = groupOverlaps(overlapDict)
 		writeOverlaps(outDir,refClusters)
-		if args.redundantRefs:
+		if args.writeoverlaps:
 			writeRedundant(outDir,refClusters,refMaster)
 
 	# Extract hits for each refRepeat, write clusters
@@ -563,9 +565,9 @@ if __name__== '__main__':
 								action="store_true",
 								help="Report clusters of reference repeats which share hit locations overlapping >= 1bp with at least \
 								one other member of the cluster. Use as guide to curate and merge redundant reference repeats.")
-	parser.add_argument("--redundantRefs",
+	parser.add_argument("--writeoverlaps",
 								action="store_true",
-								help="If set with 'reportoverlaps', print groups of potentially redundant reference repeats \
+								help="If set with 'reportoverlaps', write groups of potentially redundant reference repeats \
 								to multi FASTA files for inspection.")
 
 
