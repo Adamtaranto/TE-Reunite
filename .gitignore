@@ -1,6 +1,8 @@
 #Testing
 test/
 data/
+curation/
+OUT_BLAST/
 
 
 # Byte-compiled / optimized / DLL files
