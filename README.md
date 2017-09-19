@@ -1,19 +1,14 @@
 # TE-Reunite
 
-# Table of contents
+For a set of reference transposons, collect instances from one or more genomes and write as multi-FASTA files.
+Repeat collections can be aligned and used to [build models capturing TE family diversity](http://hmmer.org/), 
+or produce [deRIP'd reference sequences](https://github.com/Adamtaranto/deRIP2).
 
-* [About TE-Reunite](#about-te-reunite)
+# Table of contents
 * [Installing TE-Reunite](#installing-te-reunite)
 * [Example usage](#example-usage)
 * [Standard options](#standard-options)
 * [License](#license)
-
-
-# About TE-Reunite
-
-For a set of reference transposons, collect instances from one or more genomes and write as multi-FASTA files.
-Repeat collections can be aligned and used to [build models capturing TE family diversity](http://hmmer.org/), 
-or produce [deRIP'd reference sequences](https://github.com/Adamtaranto/deRIP2).
 
 # Installing TE-Reunite
 
@@ -45,7 +40,7 @@ reunite -r RepeatLibrary.fa -b BLAST_Results.tab -c 0.8 -e 0.001 -i 0.7 -o outpu
 
 # Standard options
 
-```bash
+```
 Usage: reunite [-h] -r REPEATS -g GENOMES [GENOMES ...] -l GENOMELABELS
                   [GENOMELABELS ...] [-b BLASTTAB] [--rmOut RMOUT] [-s MINSW]
                   [-c MINCOV] [-e EVAL] [-i MINID] [-o OUTDIR] [--onlyhits]
